@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Plant Health — Heart Rot Check</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --card: #1a222d;
+      --text: #e8eef4;
+      --muted: #8b9aab;
+      --accent: #3ecf8e;
+      --warn: #f0b429;
+      --bar-bg: #2a3441;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: system-ui, Segoe UI, Roboto, sans-serif;
+      background: radial-gradient(1200px 600px at 20% -10%, #1a3d32 0%, var(--bg) 55%);
+      color: var(--text);
+      padding: 2rem 1rem 3rem;
+    }
+    main {
+      max-width: 520px;
+      margin: 0 auto;
+      background: var(--card);
+      border-radius: 16px;
+      padding: 1.5rem;
+      box-shadow: 0 12px 40px rgba(0,0,0,.35);
+      border: 1px solid #243041;
+    }
+    h1 { font-size: 1.35rem; margin: 0 0 0.35rem; font-weight: 650; }
+    p.lead { margin: 0 0 1.25rem; color: var(--muted); font-size: 0.95rem; }
+    label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 0.35rem; }
+    input[type="file"] {
+      width: 100%;
+      padding: 0.65rem;
+      border-radius: 10px;
+      border: 1px dashed #3d4d63;
+      background: #131a22;
+      color: var(--text);
+    }
+    .row { margin-top: 1rem; }
+    .toggle {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+    button {
+      margin-top: 1.1rem;
+      width: 100%;
+      padding: 0.85rem 1rem;
+      border: none;
+      border-radius: 10px;
+      font-weight: 600;
+      font-size: 1rem;
+      cursor: pointer;
+      background: linear-gradient(135deg, #2d8f6a, var(--accent));
+      color: #062015;
+    }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    .preview {
+      margin-top: 1rem;
+      border-radius: 12px;
+      overflow: hidden;
+      max-height: 220px;
+      background: #131a22;
+      display: none;
+    }
+    .preview img { width: 100%; height: auto; display: block; object-fit: contain; max-height: 220px; }
+    .result {
+      margin-top: 1.25rem;
+      padding: 1rem;
+      border-radius: 12px;
+      background: #131a22;
+      border: 1px solid #2a3441;
+      display: none;
+    }
+    .result h2 { margin: 0 0 0.5rem; font-size: 1.1rem; }
+    .meter-wrap { margin-top: 0.75rem; }
+    .meter-label { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.35rem; }
+    .meter {
+      height: 12px;
+      border-radius: 999px;
+      background: var(--bar-bg);
+      overflow: hidden;
+    }
+    .meter-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #2d8f6a, var(--accent));
+      transition: width 0.35s ease;
+    }
+    .err { color: #ff8a8a; font-size: 0.9rem; margin-top: 0.75rem; display: none; }
+    .warn { color: var(--warn); font-size: 0.85rem; margin-top: 0.5rem; }
+    .probs { font-size: 0.8rem; color: var(--muted); margin-top: 0.5rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Healthy vs Heart Rot</h1>
+    <p class="lead">Upload a leaf photo. Results use MobileNetV2 with a confidence meter for quick field readability.</p>
+
+    <label for="image">Photo</label>
+    <input type="file" id="image" accept="image/*" />
+
+    <div class="row toggle">
+      <input type="checkbox" id="histogram_eq" />
+      <label for="histogram_eq" style="margin:0">Histogram equalization (luminance test)</label>
+    </div>
+
+    <button type="button" id="run">Analyze</button>
+    <p class="err" id="err"></p>
+
+    <div class="preview" id="preview"><img id="previewImg" alt="preview" /></div>
+
+    <div class="result" id="result">
+      <h2 id="predLabel">—</h2>
+      <div class="meter-wrap">
+        <div class="meter-label">
+          <span>Confidence</span>
+          <span id="confText">0%</span>
+        </div>
+        <div class="meter" aria-label="confidence meter">
+          <div class="meter-fill" id="confBar"></div>
+        </div>
+      </div>
+      <div class="probs" id="probs"></div>
+      <div class="warn" id="warn" style="display:none"></div>
+    </div>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const preview = $("preview");
+    const previewImg = $("previewImg");
+    const err = $("err");
+    const result = $("result");
+    const runBtn = $("run");
+
+    $("image").addEventListener("change", () => {
+      err.style.display = "none";
+      result.style.display = "none";
+      const f = $("image").files[0];
+      if (!f) { preview.style.display = "none"; return; }
+      preview.style.display = "block";
+      previewImg.src = URL.createObjectURL(f);
+    });
+
+    runBtn.addEventListener("click", async () => {
+      err.style.display = "none";
+      const f = $("image").files[0];
+      if (!f) {
+        err.textContent = "Choose an image first.";
+        err.style.display = "block";
+        return;
+      }
+      const fd = new FormData();
+      fd.append("image", f);
+      fd.append("histogram_eq", $("histogram_eq").checked ? "true" : "false");
+      runBtn.disabled = true;
+      try {
+        const res = await fetch("/predict", { method: "POST", body: fd });
+        const data = await res.json();
+        if (!res.ok) {
+          err.textContent = data.error || "Request failed.";
+          err.style.display = "block";
+          return;
+        }
+        $("predLabel").textContent = data.prediction;
+        const pct = Math.max(0, Math.min(100, data.confidence_percent ?? (data.confidence * 100)));
+        $("confText").textContent = pct.toFixed(1) + "%";
+        $("confBar").style.width = pct + "%";
+        const p = data.probabilities || {};
+        $("probs").textContent =
+          "Healthy: " + (p.Healthy != null ? (p.Healthy * 100).toFixed(1) : "—") +
+          "% · Heart_Rot: " + (p.Heart_Rot != null ? (p.Heart_Rot * 100).toFixed(1) : "—") + "%";
+        if (data.warning) {
+          $("warn").style.display = "block";
+          $("warn").textContent = data.warning;
+        } else {
+          $("warn").style.display = "none";
+        }
+        result.style.display = "block";
+      } catch (e) {
+        err.textContent = "Network error. Is the server running?";
+        err.style.display = "block";
+      } finally {
+        runBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
